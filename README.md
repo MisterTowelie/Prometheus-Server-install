@@ -24,7 +24,7 @@ Run the script again to update Prometheus
 
 To fine-tune the Prometheus monitoring system after installation, edit the configuration file prometheus.yml [Prometheus DOCS](https://prometheus.io/docs/prometheus/latest/configuration/configuration/)
 ```bash
-(nano /etc/prometheus/prometheus.yml)
+nano /etc/prometheus/prometheus.yml
 ```
 
 
