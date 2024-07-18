@@ -13,6 +13,9 @@
 # v1.0.0
 # - Initial version.
 ############################################################################
+# v1.0.1
+# - Code correction.
+############################################################################
 
 # Troubleshooting
 #set -e -u -x
@@ -30,25 +33,104 @@ readonly WARNING="${BOLD}${YELLOW}[WARNING]:$NORM"
 # Root only
 [[ $EUID -ne 0 ]] && echo -e "$WARNING This script must be run as root!" && exit 1
 
-# Detected architecture 
+# Detected architecture, platform (test)
+if [[ "$(uname)" != 'Linux' ]]; then
+  echo -e "$ERROR This operating system is not supported."
+  exit 1
+fi
 case $(uname -m) in
-  x86_64)
-    readonly PROMETHEUS_ARCH=linux-amd64
-    echo -e "$INFO Detected amd64 architecture."
+  'i386' | 'i686')
+    MACHINE_ARCH='linux-386'
+    echo -e "$INFO Detected i386(i686) architecture."
     ;;
-  armv7l)
-    readonly PROMETHEUS_ARCH=linux-armv7
+  'amd64' | 'x86_64')
+    MACHINE_ARCH='linux-amd64'
+    echo -e "$INFO Detected Amd64 architecture."
+    ;;
+  'armv5tel')
+    MACHINE_ARCH='linux-armv5'
+    echo -e "$INFO Detected ARMv5tel architecture."
+    ;;
+  'armv6l')
+    MACHINE_ARCH='linux-armv6'
+    grep Features /proc/cpuinfo | grep -qw 'vfp' || MACHINE_ARCH='linux-armv5'
+    echo -e "$INFO Detected ARMv6 architecture."
+    ;;
+  'armv7' | 'armv7l')
+    MACHINE_ARCH='linux-armv7'
     echo -e "$INFO Detected ARMv7 architecture."
     ;;
-  aarch64)
-    readonly PROMETHEUS_ARCH=linux-arm64
+  'armv8' | 'aarch64')
+    MACHINE_ARCH='linux-arm64'
     echo -e "$INFO Detected ARMv8 architecture."
     ;;
+  'mips')
+    MACHINE_ARCH='linux-mips'
+    echo -e "$INFO Detected Mips architecture."
+    ;;
+  'mipsle')
+    MACHINE_ARCH='linux-mipsle'
+    echo -e "$INFO Detected Mipsle architecture."
+    ;;
+  'mips64')
+    MACHINE_ARCH='linux-mips64'
+    lscpu | grep -q "Little Endian" && MACHINE_ARCH='linux-mips64le'
+    echo -e "$INFO Detected Mips64 architecture."
+    ;;
+  'mips64le')
+    MACHINE_ARCH='linux-mips64le'
+    echo -e "$INFO Detected Mips64le architecture."
+    ;;
+  'ppc64')
+    MACHINE_ARCH='linux-ppc64'
+    echo -e "$INFO Detected Ppc64 architecture."
+    ;;
+  'ppc64le')
+    MACHINE_ARCH='linux-ppc64le'
+    echo -e "$INFO Detected Ppc64le architecture."
+    ;;
+  'riscv64')
+    MACHINE_ARCH='linux-riscv64'
+    echo -e "$INFO Detected Riscv64 architecture."
+    ;;
+  's390x')
+    MACHINE_ARCH='linux-s390x'
+    echo -e "$INFO Detected s390x architecture."
+    ;;
   *) 
-    echo "$ERROR This is unsupported platform, sorry."
+    echo -e "$ERROR This is unsupported platform, sorry."
     exit 1
     ;;
 esac
+if [[ ! -f '/etc/os-release' ]]; then
+  echo -e "$ERROR Don't use outdated Linux distributions."
+  exit 1
+fi
+if [[ -f /.dockerenv ]] || grep -q 'docker\|lxc' /proc/1/cgroup && [[ "$(type -P systemctl)" ]]; then
+    true
+  elif [[ -d /run/systemd/system ]] || grep -q systemd <(ls -l /sbin/init); then
+    true
+  else
+    echo -e "$ERROR Only Linux distributions using systemd are supported."
+    exit 1
+  fi
+  if [[ "$(type -P apt)" ]]; then
+    PACKAGE_MANAGEMENT_INSTALL='apt -y --no-install-recommends install'
+  elif [[ "$(type -P dnf)" ]]; then
+    PACKAGE_MANAGEMENT_INSTALL='dnf -y install'
+  elif [[ "$(type -P yum)" ]]; then
+    PACKAGE_MANAGEMENT_INSTALL='yum -y install'
+  elif [[ "$(type -P zypper)" ]]; then
+    PACKAGE_MANAGEMENT_INSTALL='zypper install -y --no-recommends'
+  elif [[ "$(type -P pacman)" ]]; then
+    PACKAGE_MANAGEMENT_INSTALL='pacman -Syy --noconfirm'
+    elif [[ "$(type -P emerge)" ]]; then
+    PACKAGE_MANAGEMENT_INSTALL='emerge -qv'
+    echo -e "$INFO PACKAGE_MANAGEMENT_INSTALL= $PACKAGE_MANAGEMENT_INSTALL"
+  else
+    echo -e "$ERROR The script does not support the package manager in this operating system."
+    exit 1
+  fi
 
 # Dependencies
 function set_Dependencies(){
@@ -65,6 +147,7 @@ function set_Dependencies(){
   readonly PATH_PROMTOOL="${PROMETHEUS_FOLDER_BASE_DIR}/promtool"
   readonly PATH_CONFIG="${PROMETHEUS_FOLDER_CONFIG}/prometheus.yml"
   readonly PATH_SERVICE="/etc/systemd/system/prometheus.service"
+  readonly SERVICE_USER="prometheus"
 	# readonly PATH_WGET="/usr/bin/wget"
   readonly PATH_CURL="/usr/bin/curl"
   IS_PROMETHEUS="0"
@@ -74,9 +157,6 @@ function set_Dependencies(){
 
 # Dependencies
 function check_Dependencies(){
-  PROMETHEUS_REMOTE_VERSION_DOWNLOAD="$(curl -sL "$PROMETHEUS_LATEST_URL" | grep "tag_name" | head -1 | cut -d \" -f 4 | tr -d "v")"
-  PROMETHEUS_TAR="prometheus-${PROMETHEUS_REMOTE_VERSION_DOWNLOAD}.${PROMETHEUS_ARCH}.tar.gz"
-  PROMETHEUS_DOWNLOAD_URL="https://github.com/prometheus/prometheus/releases/download/""v${PROMETHEUS_REMOTE_VERSION_DOWNLOAD}/${PROMETHEUS_TAR}"
   
 	if [ -f $PATH_PROMETHEUS ]; then
 		STATUS_PATH_PROMETHEUS="$(echo -e "$GREEN OK $NORM")"
@@ -117,9 +197,6 @@ function check_Dependencies(){
 	#   IS_WGET="1"
   # fi
 
-  readonly PROMETHEUS_REMOTE_VERSION_DOWNLOAD
-  readonly PROMETHEUS_TAR
-  readonly PROMETHEUS_DOWNLOAD_URL
   local PROMETHEUS_LOCAL_COMMIT
   local PROMETHEUS_REMOTE_COMMIT
 }
@@ -155,15 +232,18 @@ function check_update_Prometheus(){
 
 # Download Prometheus Server
 function download_Prometheus() {
+  PROMETHEUS_REMOTE_VERSION_DOWNLOAD="$(curl -sL "$PROMETHEUS_LATEST_URL" | grep "tag_name" | head -1 | cut -d \" -f 4 | tr -d "v")"
+  PROMETHEUS_TAR="prometheus-${PROMETHEUS_REMOTE_VERSION_DOWNLOAD}.${MACHINE_ARCH}.tar.gz"
+  PROMETHEUS_DOWNLOAD_URL="https://github.com/prometheus/prometheus/releases/download/""v${PROMETHEUS_REMOTE_VERSION_DOWNLOAD}/${PROMETHEUS_TAR}"
   echo -e "$INFO Download Prometheus Server"
   cd /tmp || exit 1
   if [ -f "${PROMETHEUS_TAR}" ]; then
-    echo -e "$INFO Files:${PROMETHEUS_TAR} -$GREEN [found] $NORM"
+    echo -e "$INFO Files:${PROMETHEUS_TAR}$GREEN [found]$NORM"
   else
-    echo -e "$INFO Files:${PROMETHEUS_TAR} not found, download now..."
+    echo -e "$INFO Files:${PROMETHEUS_TAR}$RED [not found]$NORM, download now..."
     # { wget --no-check-certificate -c -t3 -T60 -O "$PROMETHEUS_TAR" "${PROMETHEUS_DOWNLOAD_URL}" || curl --request GET -sL --url "${PROMETHEUS_DOWNLOAD_URL}" --output "$PROMETHEUS_TAR" ; }
-    if ! curl --request GET -sL --url "${PROMETHEUS_DOWNLOAD_URL}" --output "$PROMETHEUS_TAR"; then
-      echo -e "$ERROR Download ${PROMETHEUS_TAR} $RED failed. $NORM"
+    if ! $(type -P curl) --request GET -sLq --retry 5 --retry-delay 10 --retry-max-time 60 --url "${PROMETHEUS_DOWNLOAD_URL}" --output "$PROMETHEUS_TAR"; then
+      echo -e "$ERROR Download ${PROMETHEUS_TAR}$RED [failed].$NORM"
       rm -Rf "$PROMETHEUS_TAR"
     fi
   fi
@@ -171,29 +251,30 @@ function download_Prometheus() {
 
 # Unpack archive
 function unpack_Archive(){
-  if ! tar xfz "${PROMETHEUS_TAR}"; then
+  if ! tar xfzv "${PROMETHEUS_TAR}"; then
     echo -e "$ERROR An error occurred while unzipping the$RED${PROMETHEUS_TAR}$NORM"
     rm -Rf "$PROMETHEUS_TAR"
-  else
-    cd prometheus-"${PROMETHEUS_REMOTE_VERSION_DOWNLOAD}"."${PROMETHEUS_ARCH}" || exit 1
+    echo -e "$ERROR $$PROMETHEUS_TAR"
+    exit 1
   fi
-
+  cd prometheus-"${PROMETHEUS_REMOTE_VERSION_DOWNLOAD}"."${MACHINE_ARCH}" || exit 1
 }
 
 # Make prometheus user
 function check_Users(){
-  if grep -qs "^prometheus:" /etc/passwd > /dev/null; then
-    echo -e "$INFO User Prometheus -$GREEN [found]$NORM"
+  if grep -qs "^$SERVICE_USER:" /etc/passwd > /dev/null; then
+    echo -e "$INFO User $SERVICE_USER -$GREEN [found]$NORM"
   else
-    adduser --no-create-home --disabled-login --shell /bin/false --gecos "Prometheus Monitoring User" prometheus
+    echo -e "$INFO User $SERVICE_USER -$RED [not found]$NORM/ Create User"
+    adduser --no-create-home --disabled-login --shell /bin/false --gecos "Prometheus Monitoring User" $SERVICE_USER
   fi
 }
 
 # Make directories and dummy files necessary for prometheus
 function create_Directory(){
   check_Users
-  [ ! -d "${PROMETHEUS_FOLDER_CONFIG}" ] && mkdir -p "${PROMETHEUS_FOLDER_CONFIG}"
-  [ ! -d "${PROMETHEUS_FOLDER_TSDATA}" ] && mkdir -p "${PROMETHEUS_FOLDER_TSDATA}"
+  mkdir -p "${PROMETHEUS_FOLDER_CONFIG}"
+  mkdir -p "${PROMETHEUS_FOLDER_TSDATA}"
 }
 
 function create_Service(){
@@ -205,8 +286,8 @@ Wants=network-online.target
 After=network-online.target
 
 [Service]
-User=prometheus
-Group=prometheus
+User=$SERVICE_USER
+Group=$SERVICE_USER
 Type=simple
 Restart=on-failure
 ExecStart=$PROMETHEUS_FOLDER_BASE_DIR/prometheus \
@@ -223,14 +304,14 @@ EOF
 # Copy utilities to where they should be in the filesystem
 # Assign ownership of the files above to prometheus user
 function move_Prometheus(){
-   cp -f "prometheus" "promtool" "${PROMETHEUS_FOLDER_BASE_DIR}" &&
-   cp -n "prometheus.yml" "${PROMETHEUS_FOLDER_CONFIG}" &&
-   cp -Rf "consoles/" "console_libraries/" "${PROMETHEUS_FOLDER_CONFIG}" &&
+   cp -fv "prometheus" "promtool" "${PROMETHEUS_FOLDER_BASE_DIR}" &&
+   cp -nv "prometheus.yml" "${PROMETHEUS_FOLDER_CONFIG}" &&
+   cp -Rfv "consoles/" "console_libraries/" "${PROMETHEUS_FOLDER_CONFIG}" &&
    chmod u+x "${PROMETHEUS_FOLDER_BASE_DIR}/prometheus" &&
    chmod u+x "${PROMETHEUS_FOLDER_BASE_DIR}/promtool" &&
    chown prometheus:prometheus $PROMETHEUS_FOLDER_BASE_DIR/prometheus &&
    chown prometheus:prometheus $PROMETHEUS_FOLDER_BASE_DIR/promtool &&
-   chown -Rv prometheus:prometheus $PROMETHEUS_FOLDER_CONFIG
+   chown -R prometheus:prometheus $PROMETHEUS_FOLDER_CONFIG
 }
 
 # Installation cleanup
@@ -238,12 +319,20 @@ function cleanup_Install(){
   rm -Rf /tmp/prometheus-"${PROMETHEUS_REMOTE_VERSION_DOWNLOAD}"*
 }
 
-# Start prometheus Service
+# Start Prometheus Service
 function service_Prometheus(){
-   systemctl daemon-reload &&
-   systemctl enable prometheus &&
-   systemctl start prometheus &&
-   systemctl status prometheus --no-pager
+  local PROMETHEUS_CUSTOMIZE
+  systemctl daemon-reload &&
+  systemctl enable prometheus &&
+  systemctl start prometheus
+  PROMETHEUS_CUSTOMIZE="$(systemctl list-units | grep 'prometheus' | awk -F ' ' '{print $1}')"
+  if systemctl -q is-active "${PROMETHEUS_CUSTOMIZE:-prometheus}"; then
+      echo -e "$INFO Start the Prometheus server service."
+      completion_Message
+  else
+      echo -e "$INFO Failed to start Prometheus server service."
+      exit 1
+  fi
 }
 
 # Display a completion message
@@ -255,13 +344,17 @@ function completion_Message() {
 # Install Dependencies
 function install_Dependencies() {
   # if [ "${IS_CURL}" == "1" ] || [ "${IS_WGET}" == "1" ]; then
-    if [ "${IS_CURL}" == "1" ]; then
+  if [ "${IS_CURL}" == "1" ]; then
 		# echo -e "$INFO Installing required packages. Wget and Curl is required to use this installer."
     echo -e "$INFO Installing required packages. Curl is required to use this installer."
 		read -n1 -r -p "Press any key to install Curl and continue..."
-		apt update &&
-		apt install -y wget curl
-	fi
+    if ${PACKAGE_MANAGEMENT_INSTALL} curl; then
+      echo -e "$INFO Curl is installed."
+    else
+      echo -e "$ERROR Installation of Curl failed, please check your network."
+      exit 1
+    fi
+  fi
 }
 
 # Prometheus Server Update Block
@@ -292,7 +385,6 @@ function main(){
     update_Prometheus
   fi
   service_Prometheus
-  completion_Message
   cleanup_Install
 }
 

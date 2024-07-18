@@ -3,7 +3,9 @@
 [![License](https://img.shields.io/github/license/Shabinder/SpotiFlyer?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0.html)
 
 ## System Required:
-* Tested on Debian11+(amd64 and Aaarch64), Ubuntu20+(amd64), Trisquel10+(amd64)
+* Can work on armv*, mips, ppc64, riscv64, s390x.
+* Can work on Debian, Ubuntu, CentOS(AlmaLinux), ArchLinux.
+ (Tested on Debian11+(amd64 and Aaarch64), Ubuntu20+, Trisquel10+, not tested on other operating systems and platforms)
 * Curl
 * Sudo
 
