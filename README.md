@@ -1,5 +1,5 @@
 # Auto install Prometheus monitoring system on Linux
-[![Download](https://img.shields.io/badge/download-Bash-brightgreen.svg)](https://raw.githubusercontent.com/MisterTowelie/Prometheus-Server-install/prometheus-server-install.sh)
+[![Download](https://img.shields.io/badge/download-Bash-brightgreen.svg)](https://raw.githubusercontent.com/MisterTowelie/Prometheus-Server-install/main/prometheus-server-install.sh)
 [![License](https://img.shields.io/github/license/Shabinder/SpotiFlyer?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0.html)
 
 ## System Required:
@@ -19,14 +19,13 @@ The auto-installation script for the Prometheus monitoring system serves the pur
 ## Installing
 It will install Prometheus the server, configure it, create a systemd service.
 ```bash
-curl -O https://raw.githubusercontent.com/MisterTowelie/Prometheus-Server-install/prometheus-server-install.sh && sudo chmod +x prometheus-server-install.sh
-sudo ./prometheus-server-install.sh
+bash -c "$(curl -O https://raw.githubusercontent.com/MisterTowelie/Prometheus-Server-install/main/prometheus-server-install.sh)" && sudo chmod +x prometheus-server-install.sh && sudo ./prometheus-server-install.sh
 ```
 Run the script again to update Prometheus
 
 To fine-tune the Prometheus monitoring system after installation, edit the configuration file prometheus.yml [Prometheus DOCS](https://prometheus.io/docs/prometheus/latest/configuration/configuration/)
 ```bash
-nano /etc/prometheus/prometheus.yml
+sudo nano /etc/prometheus/prometheus.yml
 ```
 
 
